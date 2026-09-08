@@ -134,6 +134,7 @@ def init_db_tables():
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     storyboard_id INT,
                     judul_scene VARCHAR(255),
+                    learning_objective_tag VARCHAR(50),
                     visualisasi TEXT,
                     instruksi_visual TEXT,
                     animasi TEXT,
@@ -163,9 +164,7 @@ def parse_llm_json_response(response_text):
 
     text = response_text.strip()
 
-    # 1. Coba bersihkan blok markdown jika ada (```json ... ``` atau ``` ...)
     if "```" in text:
-      # Ambil isi di dalam blok markdown pertama yang ditemukan
       match_code = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
       if match_code:
         text = match_code[0].strip()
@@ -174,13 +173,11 @@ def parse_llm_json_response(response_text):
         text = re.sub(r"\n?```$", "", text)
         text = text.strip()
 
-    # 2. Coba langsung parse jika sudah murni JSON
     try:
       return json.loads(text)
     except Exception:
       pass
 
-    # 3. Cari pola array JSON [ ... ] di dalam teks menggunakan regex yang agresif
     match_array = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
     if match_array:
       try:
@@ -188,7 +185,6 @@ def parse_llm_json_response(response_text):
       except Exception:
         pass
 
-    # 4. Jika masih gagal, coba bersihkan karakter non-JSON di awal/akhir string
     start_idx = text.find("[")
     end_idx = text.rfind("]")
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
@@ -227,7 +223,8 @@ def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
     table.columns[2].width = Inches(3.0)
     table.columns[3].width = Inches(2.3)
 
-    table.cell(0, 0).text = f"Program Studi\n{program_studi}"
+    lo_tag = row.get("Learning Objective", "LO1")
+    table.cell(0, 0).text = f"Program Studi: {program_studi}\nTarget: {lo_tag}"
     table.cell(0, 1).text = ":"
 
     cell_judul_start = table.cell(0, 2)
@@ -359,6 +356,7 @@ if not st.session_state.logged_in:
 
               st.session_state.storyboard_df = pd.DataFrame(columns=[
                   "Judul Scene",
+                  "Learning Objective",
                   "Visualisasi",
                   "Instruksi untuk Visual",
                   "Animasi",
@@ -432,6 +430,7 @@ elif st.session_state.is_admin:
       st.session_state.is_admin = False
       st.session_state.storyboard_df = pd.DataFrame(columns=[
           "Judul Scene",
+          "Learning Objective",
           "Visualisasi",
           "Instruksi untuk Visual",
           "Animasi",
@@ -575,6 +574,7 @@ else:
       st.session_state.is_admin = False
       st.session_state.storyboard_df = pd.DataFrame(columns=[
           "Judul Scene",
+          "Learning Objective",
           "Visualisasi",
           "Instruksi untuk Visual",
           "Animasi",
@@ -740,7 +740,8 @@ else:
                 " mengembalikan HANYA valid JSON array tanpa teks pengantar,"
                 " tanpa penjelasan, dan tanpa markdown block.\n\n"
                 "Berdasarkan dokumen kurikulum referensi berikut, buatlah"
-                " rancangan storyboard pembelajaran yang komprehensif:\n\n"
+                " rancangan storyboard pembelajaran yang komprehensif.\n"
+                "Sertakan mapping Learning Objective ke setiap scene menggunakan format tag 'LO1', 'LO2', 'LO3', dst.\n\n"
                 "DOKUMEN KURIKULUM REFERENSI:\n"
                 f"{context_text}\n\n"
                 f"Program Studi: {program_studi}\n"
@@ -749,14 +750,13 @@ else:
                 f"Visual Style: {visual_style}\n"
                 f"Target Audience: {target_audience}\n\n"
                 "ATURAN MUTLAK:\n"
-                "1. Output HARUS berupa JSON array (list of objects) yang"
-                " valid.\n"
-                "2. Jangan tulis kata-kata pengantar. Langsung mulai dengan"
-                " karakter '[' dan akhiri dengan ']'.\n"
+                "1. Output HARUS berupa JSON array (list of objects) yang valid.\n"
+                "2. Jangan tulis kata-kata pengantar. Langsung mulai dengan karakter '[' dan akhiri dengan ']'.\n"
                 "3. Gunakan kunci JSON persis seperti ini:\n"
                 "[\n"
                 "  {\n"
                 '    "judul_scene": "01 - Pengenalan Konsep",\n'
+                '    "learning_objective": "LO1",\n'
                 '    "visualisasi": "Ilustrasi diagram blok...",\n'
                 '    "instruksi_visual": "Zoom in ke bagian matriks",\n'
                 '    "animasi": "Fade in / slide from left",\n'
@@ -782,7 +782,7 @@ else:
 
             scenes_json = parse_llm_json_response(resp_text)
 
-            # --- TAMBAHAN FITUR: LEARNING OBJECTIVE ALIGNMENT EVALUATION ---
+            # Evaluasi Alignment Learning Objective
             alignment_prompt = (
                 "SYSTEM: Anda adalah evaluator RAG dan kurikulum pendidikan.\n"
                 "Berdasarkan dokumen kurikulum referensi dan Learning Objective yang ditentukan, "
@@ -804,6 +804,9 @@ else:
               for item in scenes_json:
                 formatted_scenes.append({
                     "Judul Scene": str(item.get("judul_scene", "Scene 01")),
+                    "Learning Objective": str(
+                        item.get("learning_objective", "LO1")
+                    ),
                     "Visualisasi": str(item.get("visualisasi", "")),
                     "Instruksi untuk Visual": str(
                         item.get("instruksi_visual", "")
@@ -839,13 +842,14 @@ else:
                 )
                 storyboard_id = cursor.lastrowid
 
-                query_scene = "INSERT INTO storyboard_scenes (storyboard_id, judul_scene, visualisasi, instruksi_visual, animasi, on_screen_text, voice_over_text, backsound, durasi, saran_info) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                query_scene = "INSERT INTO storyboard_scenes (storyboard_id, judul_scene, learning_objective_tag, visualisasi, instruksi_visual, animasi, on_screen_text, voice_over_text, backsound, durasi, saran_info) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 for row in formatted_scenes:
                   cursor.execute(
                       query_scene,
                       (
                           storyboard_id,
                           row["Judul Scene"],
+                          row["Learning Objective"],
                           row["Visualisasi"],
                           row["Instruksi untuk Visual"],
                           row["Animasi"],
@@ -909,7 +913,6 @@ else:
   with col_right:
     st.subheader("Storyboard Editor & Management")
 
-    # --- KOMPONEN BARU: LEARNING OBJECTIVE ALIGNMENT EVALUATION ---
     if (
         "alignment_evaluation" in st.session_state
         and st.session_state.alignment_evaluation
@@ -922,6 +925,7 @@ else:
     if "storyboard_df" not in st.session_state:
       st.session_state.storyboard_df = pd.DataFrame(columns=[
           "Judul Scene",
+          "Learning Objective",
           "Visualisasi",
           "Instruksi untuk Visual",
           "Animasi",
@@ -949,7 +953,8 @@ else:
     else:
       for idx, row in st.session_state.storyboard_df.iterrows():
         with st.expander(
-            f"🎬 {row.get('Judul Scene', f'Scene {idx+1}')} (Durasi:"
+            f"🎬 {row.get('Judul Scene', f'Scene {idx+1}')} [Target:"
+            f" {row.get('Learning Objective', 'LO1')}] (Durasi:"
             f" {row.get('Durasi', '00:15')})",
             expanded=False,
         ):
@@ -957,6 +962,19 @@ else:
           with c1:
             new_judul = st.text_input(
                 "Judul Scene", value=str(row["Judul Scene"]), key=f"jdl_{idx}"
+            )
+            new_lo = st.selectbox(
+                "Learning Objective Target",
+                ["LO1", "LO2", "LO3", "LO4", "LO5"],
+                index=(
+                    ["LO1", "LO2", "LO3", "LO4", "LO5"].index(
+                        str(row["Learning Objective"])
+                    )
+                    if str(row["Learning Objective"])
+                    in ["LO1", "LO2", "LO3", "LO4", "LO5"]
+                    else 0
+                ),
+                key=f"lo_{idx}",
             )
             new_dur = st.text_input(
                 "Durasi", value=str(row["Durasi"]), key=f"dur_{idx}"
@@ -969,10 +987,10 @@ else:
                 value=str(row["On-Screen Text"]),
                 key=f"ost_{idx}",
             )
+          with c2:
             new_bs = st.text_input(
                 "Backsound", value=str(row["Backsound"]), key=f"bs_{idx}"
             )
-          with c2:
             new_vis = st.text_area(
                 "Visualisasi",
                 value=str(row["Visualisasi"]),
@@ -1020,6 +1038,7 @@ else:
 
           updated_rows.append({
               "Judul Scene": new_judul,
+              "Learning Objective": new_lo,
               "Visualisasi": new_vis,
               "Instruksi untuk Visual": new_inst,
               "Animasi": new_anim,
@@ -1039,6 +1058,7 @@ else:
         next_num = len(st.session_state.storyboard_df) + 1
         new_row_df = pd.DataFrame([{
             "Judul Scene": f"Scene {str(next_num).zfill(2)} - Judul Baru",
+            "Learning Objective": "LO1",
             "Visualisasi": "Deskripsi visual...",
             "Instruksi untuk Visual": "Instruksi khusus...",
             "Animasi": "Fade In",
@@ -1122,7 +1142,7 @@ else:
               ):
                 conn = get_db_connection()
                 query_load_scenes = """
-                                    SELECT judul_scene, visualisasi, instruksi_visual, animasi, 
+                                    SELECT judul_scene, learning_objective_tag, visualisasi, instruksi_visual, animasi, 
                                            on_screen_text, voice_over_text, backsound, durasi, saran_info 
                                     FROM storyboard_scenes WHERE storyboard_id = %s
                                 """
@@ -1135,6 +1155,7 @@ else:
                   df_scenes_loaded.rename(
                       columns={
                           "judul_scene": "Judul Scene",
+                          "learning_objective_tag": "Learning Objective",
                           "visualisasi": "Visualisasi",
                           "instruksi_visual": "Instruksi untuk Visual",
                           "animasi": "Animasi",
