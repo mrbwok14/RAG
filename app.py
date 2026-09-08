@@ -5,9 +5,18 @@ import re
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-import mysql.connector
 import pandas as pd
+import mysql.connector
 import streamlit as st
+
+db_config = st.secrets["mysql"]
+conn = mysql.connector.connect(
+    host=db_config["${{RAILWAY_PRIVATE_DOMAIN}}"],
+    user=db_config["root"],
+    password=db_config["${{ MYSQL_ROOT_PASSWORD }}"],
+    database=db_config["railway"],
+    port=int(db_config["3306"]),
+)
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
@@ -65,7 +74,7 @@ st.markdown(
 def check_db_connection():
   try:
     conn = mysql.connector.connect(
-        host="localhost", user="root", password="", database="db_eduboard"
+        host="mysql://root:QfMrADZlPXPIhoruAXaxCyfymGvLFirz@mysql.railway.internal:3306/railway", user="root", password="QfMrADZlPXPIhoruAXaxCyfymGvLFirz", database="db_eduboard"
     )
     conn.close()
     return True
@@ -75,7 +84,7 @@ def check_db_connection():
 
 def get_db_connection():
   return mysql.connector.connect(
-      host="localhost", user="root", password="", database="db_eduboard"
+      host="mysql://root:QfMrADZlPXPIhoruAXaxCyfymGvLFirz@mysql.railway.internal:3306/railway", user="root", password="QfMrADZlPXPIhoruAXaxCyfymGvLFirz", database="db_eduboard"
   )
 
 
