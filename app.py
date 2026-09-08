@@ -409,7 +409,7 @@ else:
           "Masukkan Groq API Key", type="password", value=""
       )
       groq_model = st.selectbox(
-          "Model Groq", ["llama-3.3-70b-versatile", "llama3-8b-8192"]
+          "Model Groq", ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
       )
     else:
       local_model_name = st.selectbox(
@@ -512,7 +512,6 @@ else:
                 [doc.page_content for doc in relevant_docs]
             )
 
-            # Inisialisasi LLM Berdasarkan Pilihan (Ollama / Groq Cloud)
             if llm_provider == "Groq API (Cloud / Streamlit Cloud)":
               if not groq_api_key:
                 st.error("⚠️ Masukkan Groq API Key terlebih dahulu di sidebar.")
@@ -536,7 +535,6 @@ else:
             )
 
             response = llm.invoke(prompt)
-            # Handle respons dari ChatGroq (berupa object message) atau Ollama (string)
             resp_text = (
                 response.content
                 if hasattr(response, "content")
@@ -562,15 +560,12 @@ else:
                 })
               st.session_state.storyboard_df = pd.DataFrame(formatted_scenes)
 
-              # Simpan ke Railway MySQL
               if check_db_connection():
                 conn = get_db_connection()
                 cursor = conn.cursor()
+                query_main = "INSERT INTO storyboards (username, program_studi, nama_mata_kuliah, project_name, learning_objectives, target_audience, visual_style, rps_filename) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                 cursor.execute(
-                    "INSERT INTO storyboards (username, program_studi,"
-                    " nama_mata_kuliah, project_name, learning_objectives,"
-                    " target_audience, visual_style, rps_filename) VALUES (%s,"
-                    " %s, %s, %s, %s, %s, %s, %s)",
+                    query_main,
                     (
                         st.session_state.username,
                         program_studi,
@@ -583,12 +578,10 @@ else:
                     ),
                 )
                 sb_id = cursor.lastrowid
+                query_scene = "INSERT INTO storyboard_scenes (storyboard_id, judul_scene, visualisasi, instruksi_visual, animasi, on_screen_text, voice_over_text, backsound, durasi, saran_info) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 for r in formatted_scenes:
                   cursor.execute(
-                      "INSERT INTO storyboard_scenes (storyboard_id, judul_scene,"
-                      " visualisasi, instruksi_visual, animasi, on_screen_text,"
-                      " voice_over_text, backsound, durasi, saran_info) VALUES"
-                      " (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                      query_scene,
                       (
                           sb_id,
                           r["Judul Scene"],
