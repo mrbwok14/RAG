@@ -114,6 +114,7 @@ def init_db_tables():
                 )
             """)
 
+      # Menambahkan kolom alignment_evaluation jika belum ada di tabel storyboards
       cursor.execute("""
                 CREATE TABLE IF NOT EXISTS storyboards (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -125,6 +126,7 @@ def init_db_tables():
                     target_audience VARCHAR(100),
                     visual_style VARCHAR(100),
                     rps_filename VARCHAR(255) DEFAULT '-',
+                    alignment_evaluation TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -164,9 +166,7 @@ def parse_llm_json_response(response_text):
 
     text = response_text.strip()
 
-    # 1. Coba bersihkan blok markdown jika ada (```json ... ``` atau ``` ...)
     if "```" in text:
-      # Ambil isi di dalam blok markdown pertama yang ditemukan
       match_code = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
       if match_code:
         text = match_code[0].strip()
@@ -175,13 +175,11 @@ def parse_llm_json_response(response_text):
         text = re.sub(r"\n?```$", "", text)
         text = text.strip()
 
-    # 2. Coba langsung parse jika sudah murni JSON
     try:
       return json.loads(text)
     except Exception:
       pass
 
-    # 3. Cari pola array JSON [ ... ] di dalam teks menggunakan regex yang agresif
     match_array = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
     if match_array:
       try:
@@ -189,7 +187,6 @@ def parse_llm_json_response(response_text):
       except Exception:
         pass
 
-    # 4. Jika masih gagal, coba bersihkan karakter non-JSON di awal/akhir string
     start_idx = text.find("[")
     end_idx = text.rfind("]")
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
@@ -503,16 +500,50 @@ elif st.session_state.is_admin:
         st.error(f"Gagal memuat data user: {e}")
 
   with tab_admin_projects:
-    st.subheader("Daftar Proyek Storyboard Tersimpan")
+    st.subheader("Daftar Proyek Storyboard Tersimpan & Evaluasi RAG")
     if check_db_connection():
       try:
         conn = get_db_connection()
-        df_projects = pd.read_sql("SELECT * FROM storyboards", conn)
+        df_projects = pd.read_sql(
+            "SELECT id, username, program_studi, nama_mata_kuliah, project_name,"
+            " rps_filename, alignment_evaluation, created_at FROM storyboards"
+            " ORDER BY id DESC",
+            conn,
+        )
         conn.close()
 
         if not df_projects.empty:
-          st.dataframe(df_projects, use_container_width=True, hide_index=True)
+          # Tampilkan tabel proyek tanpa kolom teks panjang evaluation agar rapi
+          df_display = df_projects.drop(columns=["alignment_evaluation"])
 
+          event_admin = st.dataframe(
+              df_display,
+              use_container_width=True,
+              hide_index=True,
+              on_select="rerun",
+              selection_mode="single-row",
+          )
+
+          # --- KOMPONEN: LEARNING OBJECTIVE-GROUNDED RAG EVALUATION BERDASARKAN PROYEK YANG DIKLIK ---
+          selected_admin_rows = event_admin.selection.rows
+          if selected_admin_rows:
+            selected_admin_idx = selected_admin_rows[0]
+            selected_row_data = df_projects.iloc[selected_admin_idx]
+            proj_title = selected_row_data["project_name"]
+            eval_text = selected_row_data["alignment_evaluation"]
+
+            st.markdown("---")
+            st.markdown(
+                f"### 🎯 Evaluasi RAG untuk Proyek: *{proj_title}*"
+            )
+            if eval_text and str(eval_text).strip() != "None":
+              st.info(eval_text)
+            else:
+              st.warning(
+                  "⚠️ Tidak ada data Evaluasi RAG tersimpan untuk proyek ini."
+              )
+
+          st.divider()
           st.markdown("### Hapus Proyek Storyboard")
           del_proj_id = st.number_input(
               "Masukkan ID Proyek Storyboard yang ingin dihapus:",
@@ -591,7 +622,6 @@ else:
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
-      st.session_state.alignment_evaluation = ""
       st.rerun()
     st.divider()
 
@@ -628,8 +658,6 @@ else:
     st.session_state.rag_contexts = []
   if "uploaded_rps_name" not in st.session_state:
     st.session_state.uploaded_rps_name = "-"
-  if "alignment_evaluation" not in st.session_state:
-    st.session_state.alignment_evaluation = ""
 
   col_left, col_middle, col_right = st.columns([1.1, 1.2, 2.7], gap="medium")
 
@@ -787,7 +815,7 @@ else:
 
             scenes_json = parse_llm_json_response(resp_text)
 
-            # Evaluasi Alignment Learning Objective
+            # Evaluasi Alignment Learning Objective untuk disimpan ke DB
             alignment_prompt = (
                 "SYSTEM: Anda adalah evaluator RAG dan kurikulum pendidikan.\n"
                 "Berdasarkan dokumen kurikulum referensi dan Learning Objective yang ditentukan, "
@@ -802,7 +830,6 @@ else:
                 if hasattr(alignment_response, "content")
                 else str(alignment_response)
             )
-            st.session_state.alignment_evaluation = alignment_text
 
             if scenes_json and isinstance(scenes_json, list):
               formatted_scenes = []
@@ -831,7 +858,7 @@ else:
                 conn = get_db_connection()
                 cursor = conn.cursor()
 
-                query_main = "INSERT INTO storyboards (username, program_studi, nama_mata_kuliah, project_name, learning_objectives, target_audience, visual_style, rps_filename) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                query_main = "INSERT INTO storyboards (username, program_studi, nama_mata_kuliah, project_name, learning_objectives, target_audience, visual_style, rps_filename, alignment_evaluation) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 cursor.execute(
                     query_main,
                     (
@@ -843,6 +870,7 @@ else:
                         target_audience,
                         visual_style,
                         st.session_state.uploaded_rps_name,
+                        alignment_text,
                     ),
                 )
                 storyboard_id = cursor.lastrowid
@@ -917,15 +945,6 @@ else:
   # ==========================================
   with col_right:
     st.subheader("Storyboard Editor & Management")
-
-    if (
-        "alignment_evaluation" in st.session_state
-        and st.session_state.alignment_evaluation
-    ):
-      with st.expander(
-          "🎯 Learning Objective–Grounded RAG Evaluation", expanded=True
-      ):
-        st.info(st.session_state.alignment_evaluation)
 
     if "storyboard_df" not in st.session_state:
       st.session_state.storyboard_df = pd.DataFrame(columns=[
