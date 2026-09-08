@@ -5,18 +5,9 @@ import re
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-import pandas as pd
 import mysql.connector
+import pandas as pd
 import streamlit as st
-
-db_config = st.secrets["mysql"]
-conn = mysql.connector.connect(
-    host=db_config["${{RAILWAY_PRIVATE_DOMAIN}}"],
-    user=db_config["root"],
-    password=db_config["${{ MYSQL_ROOT_PASSWORD }}"],
-    database=db_config["railway"],
-    port=int(db_config["3306"]),
-)
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
@@ -70,22 +61,44 @@ st.markdown(
 )
 
 
-# --- FUNGSI DATABASE MYSQL ---
+# --- FUNGSI DATABASE MYSQL (KONEKSI RAILWAY) ---
+def get_db_connection():
+  """Mencoba membaca kredensial dari st.secrets (Streamlit Cloud/Railway)
+
+  Jika tidak ditemukan, menggunakan nilai bawaan berdasarkan data Railway Anda.
+  """
+  if "mysql" in st.secrets:
+    db_config = st.secrets["mysql"]
+    host = db_config.get("host", "mysql.railway.internal")
+    user = db_config.get("user", "root")
+    password = db_config.get("password", "QfMrADZ1PXPIhoruAXaxCyfymGvLFirz")
+    database = db_config.get("database", "railway")
+    port = int(db_config.get("port", 3306))
+  else:
+    # Nilai fallback langsung dari Railway
+    host = "mysql.railway.internal"
+    user = "root"
+    password = "QfMrADZ1PXPIhoruAXaxCyfymGvLFirz"
+    database = "railway"
+    port = 3306
+
+  return mysql.connector.connect(
+      host=host,
+      user=user,
+      password=password,
+      database=database,
+      port=port,
+      connect_timeout=10,
+  )
+
+
 def check_db_connection():
   try:
-    conn = mysql.connector.connect(
-        host="mysql://root:QfMrADZlPXPIhoruAXaxCyfymGvLFirz@mysql.railway.internal:3306/railway", user="root", password="QfMrADZlPXPIhoruAXaxCyfymGvLFirz", database="db_eduboard"
-    )
+    conn = get_db_connection()
     conn.close()
     return True
   except mysql.connector.Error:
     return False
-
-
-def get_db_connection():
-  return mysql.connector.connect(
-      host="mysql://root:QfMrADZlPXPIhoruAXaxCyfymGvLFirz@mysql.railway.internal:3306/railway", user="root", password="QfMrADZlPXPIhoruAXaxCyfymGvLFirz", database="db_eduboard"
-  )
 
 
 def init_db_tables():
@@ -148,7 +161,7 @@ init_db_tables()
 def parse_llm_json_response(response_text):
   try:
     text = response_text.strip()
-    
+
     if "```" in text:
       text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
       text = re.sub(r"\n?```$", "", text)
@@ -171,7 +184,7 @@ def parse_llm_json_response(response_text):
 
 def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
   prs = Presentation()
-  
+
   for index, row in df.iterrows():
     blank_layout = prs.slide_layouts[6]
     slide = prs.slides.add_slide(blank_layout)
@@ -183,7 +196,9 @@ def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
     width = Inches(11.7)
     height = Inches(6.0)
 
-    table_shape = slide.shapes.add_table(rows_count, cols_count, left, top, width, height)
+    table_shape = slide.shapes.add_table(
+        rows_count, cols_count, left, top, width, height
+    )
     table = table_shape.table
 
     table.columns[0].width = Inches(3.2)
@@ -193,7 +208,7 @@ def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
 
     table.cell(0, 0).text = f"Program Studi\n{program_studi}"
     table.cell(0, 1).text = ":"
-    
+
     cell_judul_start = table.cell(0, 2)
     cell_judul_end = table.cell(0, 3)
     cell_judul_start.merge(cell_judul_end)
@@ -214,8 +229,8 @@ def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
     cell_top_left.merge(cell_bottom_right)
     cell_top_left.text = f"Visualisasi:\n{row.get('Visualisasi', '')}"
 
-    table.cell(2, 2).text = str(row.get('Instruksi untuk Visual', ''))
-    table.cell(2, 3).text = str(row.get('Animasi', ''))
+    table.cell(2, 2).text = str(row.get("Instruksi untuk Visual", ""))
+    table.cell(2, 3).text = str(row.get("Animasi", ""))
 
     table.cell(3, 2).text = ""
     table.cell(3, 3).text = ""
@@ -225,29 +240,31 @@ def generate_pptx(df, program_studi, nama_mata_kuliah, project_title):
     table.cell(4, 2).text = f"Backsound:\n{row.get('Backsound', '')}"
     table.cell(4, 3).text = f"Durasi:\n{row.get('Durasi', '')}"
 
-    if row.get('Saran dan Info'):
-        saran_box = slide.shapes.add_textbox(Inches(0.8), Inches(6.9), Inches(11.7), Inches(0.5))
-        tf_saran = saran_box.text_frame
-        tf_saran.word_wrap = True
-        p_saran = tf_saran.paragraphs[0]
-        p_saran.text = f"Saran / Info: {row.get('Saran dan Info', '')}"
-        p_saran.font.size = Pt(11)
-        p_saran.font.color.rgb = RGBColor(51, 51, 51)
+    if row.get("Saran dan Info"):
+      saran_box = slide.shapes.add_textbox(
+          Inches(0.8), Inches(6.9), Inches(11.7), Inches(0.5)
+      )
+      tf_saran = saran_box.text_frame
+      tf_saran.word_wrap = True
+      p_saran = tf_saran.paragraphs[0]
+      p_saran.text = f"Saran / Info: {row.get('Saran dan Info', '')}"
+      p_saran.font.size = Pt(11)
+      p_saran.font.color.rgb = RGBColor(51, 51, 51)
 
     for r_idx, row_cells in enumerate(table.rows):
-        for c_idx, cell in enumerate(row_cells.cells):
-            cell.fill.solid()
-            if r_idx in [0, 1, 2] and c_idx in [0, 2, 3]:
-                cell.fill.fore_color.rgb = RGBColor(0, 51, 102)
-                for p in cell.text_frame.paragraphs:
-                    p.font.bold = True
-                    p.font.color.rgb = RGBColor(255, 255, 255)
-                    p.font.size = Pt(12)
-            else:
-                cell.fill.fore_color.rgb = RGBColor(240, 244, 248)
-                for p in cell.text_frame.paragraphs:
-                    p.font.color.rgb = RGBColor(51, 51, 51)
-                    p.font.size = Pt(11)
+      for c_idx, cell in enumerate(row_cells.cells):
+        cell.fill.solid()
+        if r_idx in [0, 1, 2] and c_idx in [0, 2, 3]:
+          cell.fill.fore_color.rgb = RGBColor(0, 51, 102)
+          for p in cell.text_frame.paragraphs:
+            p.font.bold = True
+            p.font.color.rgb = RGBColor(255, 255, 255)
+            p.font.size = Pt(12)
+        else:
+          cell.fill.fore_color.rgb = RGBColor(240, 244, 248)
+          for p in cell.text_frame.paragraphs:
+            p.font.color.rgb = RGBColor(51, 51, 51)
+            p.font.size = Pt(11)
 
   ppt_stream = io.BytesIO()
   prs.save(ppt_stream)
@@ -283,8 +300,8 @@ if not st.session_state.logged_in:
   with col2:
     if not check_db_connection():
       st.error(
-          "⚠️ **Database MySQL Tidak Aktif!** Pastikan XAMPP/MySQL Anda sudah"
-          " dinyalakan."
+          "⚠️ **Database Railway Tidak Terhubung!** Pastikan koneksi jaringan"
+          " dan kredensial MySQL terpasang."
       )
 
     tab_login, tab_register = st.tabs(["🔐 Login", "📝 Register"])
@@ -320,9 +337,15 @@ if not st.session_state.logged_in:
                 st.session_state.is_admin = False
 
               st.session_state.storyboard_df = pd.DataFrame(columns=[
-                  "Judul Scene", "Visualisasi", "Instruksi untuk Visual", 
-                  "Animasi", "On-Screen Text", "Voice Over Text", 
-                  "Backsound", "Durasi", "Saran dan Info"
+                  "Judul Scene",
+                  "Visualisasi",
+                  "Instruksi untuk Visual",
+                  "Animasi",
+                  "On-Screen Text",
+                  "Voice Over Text",
+                  "Backsound",
+                  "Durasi",
+                  "Saran dan Info",
               ])
               st.session_state.uploaded_rps_name = "-"
               st.session_state.retriever = None
@@ -337,7 +360,9 @@ if not st.session_state.logged_in:
     with tab_register:
       st.subheader("Buat Akun Baru")
       reg_user = st.text_input("Pilih Username", key="reg_user")
-      reg_pass = st.text_input("Pilih Password", type="password", key="reg_pass")
+      reg_pass = st.text_input(
+          "Pilih Password", type="password", key="reg_pass"
+      )
       reg_pass_confirm = st.text_input(
           "Konfirmasi Password", type="password", key="reg_pass_confirm"
       )
@@ -376,18 +401,24 @@ elif st.session_state.is_admin:
     st.markdown("### 🛡️ Super Admin Panel")
     st.write(f"👤 Admin: **{st.session_state.username}**")
     if check_db_connection():
-      st.caption("🟢 MySQL Database: Connected")
+      st.caption("🟢 MySQL Railway: Connected")
     else:
-      st.caption("🔴 MySQL Database: Disconnected")
+      st.caption("🔴 MySQL Railway: Disconnected")
 
     if st.button("🚪 Logout", use_container_width=True):
       st.session_state.logged_in = False
       st.session_state.username = ""
       st.session_state.is_admin = False
       st.session_state.storyboard_df = pd.DataFrame(columns=[
-          "Judul Scene", "Visualisasi", "Instruksi untuk Visual", 
-          "Animasi", "On-Screen Text", "Voice Over Text", 
-          "Backsound", "Durasi", "Saran dan Info"
+          "Judul Scene",
+          "Visualisasi",
+          "Instruksi untuk Visual",
+          "Animasi",
+          "On-Screen Text",
+          "Voice Over Text",
+          "Backsound",
+          "Durasi",
+          "Saran dan Info",
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
@@ -494,18 +525,24 @@ else:
     st.write(f"👤 User: **{st.session_state.username}**")
 
     if check_db_connection():
-      st.caption("🟢 MySQL Database: Connected")
+      st.caption("🟢 MySQL Railway: Connected")
     else:
-      st.caption("🔴 MySQL Database: Disconnected")
+      st.caption("🔴 MySQL Railway: Disconnected")
 
     if st.button("🚪 Logout", use_container_width=True):
       st.session_state.logged_in = False
       st.session_state.username = ""
       st.session_state.is_admin = False
       st.session_state.storyboard_df = pd.DataFrame(columns=[
-          "Judul Scene", "Visualisasi", "Instruksi untuk Visual", 
-          "Animasi", "On-Screen Text", "Voice Over Text", 
-          "Backsound", "Durasi", "Saran dan Info"
+          "Judul Scene",
+          "Visualisasi",
+          "Instruksi untuk Visual",
+          "Animasi",
+          "On-Screen Text",
+          "Voice Over Text",
+          "Backsound",
+          "Durasi",
+          "Saran dan Info",
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
@@ -523,7 +560,6 @@ else:
       unsafe_allow_html=True,
   )
 
-
   @st.cache_resource
   def initialize_local_vector_store(file_path):
     loader = PyPDFLoader(file_path)
@@ -540,7 +576,6 @@ else:
         search_type="similarity", search_kwargs={"k": 4}
     )
 
-
   if "retriever" not in st.session_state:
     st.session_state.retriever = None
   if "rag_contexts" not in st.session_state:
@@ -551,7 +586,7 @@ else:
   col_left, col_middle, col_right = st.columns([1.1, 1.2, 2.7], gap="medium")
 
   # ==========================================
-  # KOLOM 1: INPUT & SETTINGS (DISET KOSONG)
+  # KOLOM 1: INPUT & SETTINGS
   # ==========================================
   with col_left:
     st.subheader("Project Input & Ground Truth Settings")
@@ -560,12 +595,8 @@ else:
         "Pilih Model Ollama Lokal", ["llama3", "mistral", "phi3"]
     )
 
-    program_studi = st.text_input(
-        "Program Studi", value=""
-    )
-    nama_mata_kuliah = st.text_input(
-        "Nama Mata Kuliah", value=""
-    )
+    program_studi = st.text_input("Program Studi", value="")
+    nama_mata_kuliah = st.text_input("Nama Mata Kuliah", value="")
     project_name = st.text_input(
         "Project Name",
         value="",
@@ -579,11 +610,21 @@ else:
 
     target_audience = st.selectbox(
         "Target Audience",
-        ["-- Pilih Target Audience --", "Mahasiswa S1/S2 (Advanced)", "Beginner Students", "General"],
+        [
+            "-- Pilih Target Audience --",
+            "Mahasiswa S1/S2 (Advanced)",
+            "Beginner Students",
+            "General",
+        ],
     )
     visual_style = st.selectbox(
         "Visual Style",
-        ["-- Pilih Visual Style --", "Animasi Diagram Blok & Rumus Matematis", "Biology Lab", "Cinematic"],
+        [
+            "-- Pilih Visual Style --",
+            "Animasi Diagram Blok & Rumus Matematis",
+            "Biology Lab",
+            "Cinematic",
+        ],
     )
 
     st.markdown("### RAG Knowledge Base (RPS)")
@@ -626,7 +667,10 @@ else:
 
     if generate_btn:
       if not program_studi or not nama_mata_kuliah or not learning_objectives:
-        st.error("⚠️ Harap isi Program Studi, Nama Mata Kuliah, dan Learning Objectives terlebih dahulu!")
+        st.error(
+            "⚠️ Harap isi Program Studi, Nama Mata Kuliah, dan Learning"
+            " Objectives terlebih dahulu!"
+        )
       elif st.session_state.retriever is None:
         st.error(
             "⚠️ Harap upload dan proses dokumen RPS terlebih dahulu di sidebar."
@@ -647,8 +691,11 @@ else:
             llm = Ollama(model=local_model_name, temperature=0.7)
 
             prompt = (
-                "SYSTEM: Anda adalah API generator JSON murni. Tugas Anda adalah mengembalikan HANYA valid JSON array tanpa teks pengantar, tanpa penjelasan, dan tanpa markdown block.\n\n"
-                "Berdasarkan dokumen kurikulum referensi berikut, buatlah rancangan storyboard pembelajaran yang komprehensif:\n\n"
+                "SYSTEM: Anda adalah API generator JSON murni. Tugas Anda adalah"
+                " mengembalikan HANYA valid JSON array tanpa teks pengantar,"
+                " tanpa penjelasan, dan tanpa markdown block.\n\n"
+                "Berdasarkan dokumen kurikulum referensi berikut, buatlah"
+                " rancangan storyboard pembelajaran yang komprehensif:\n\n"
                 "DOKUMEN KURIKULUM REFERENSI:\n"
                 f"{context_text}\n\n"
                 f"Program Studi: {program_studi}\n"
@@ -657,8 +704,10 @@ else:
                 f"Visual Style: {visual_style}\n"
                 f"Target Audience: {target_audience}\n\n"
                 "ATURAN MUTLAK:\n"
-                "1. Output HARUS berupa JSON array (list of objects) yang valid.\n"
-                "2. Jangan tulis kata-kata pengantar. Langsung mulai dengan karakter '[' dan akhiri dengan ']'.\n"
+                "1. Output HARUS berupa JSON array (list of objects) yang"
+                " valid.\n"
+                "2. Jangan tulis kata-kata pengantar. Langsung mulai dengan"
+                " karakter '[' dan akhiri dengan ']'.\n"
                 "3. Gunakan kunci JSON persis seperti ini:\n"
                 "[\n"
                 "  {\n"
@@ -725,276 +774,4 @@ else:
                                     INSERT INTO storyboard_scenes (storyboard_id, judul_scene, visualisasi, instruksi_visual, animasi, on_screen_text, voice_over_text, backsound, durasi, saran_info) 
                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """
-                for row in formatted_scenes:
-                  cursor.execute(
-                      query_scene,
-                      (
-                          storyboard_id,
-                          row["Judul Scene"],
-                          row["Visualisasi"],
-                          row["Instruksi untuk Visual"],
-                          row["Animasi"],
-                          row["On-Screen Text"],
-                          row["Voice Over Text"],
-                          row["Backsound"],
-                          row["Durasi"],
-                          row["Saran dan Info"],
-                      ),
-                  )
-
-                conn.commit()
-                cursor.close()
-                conn.close()
-
-                st.success(
-                    "✨ Storyboard & referensi RPS berhasil direkam ke"
-                    f" MySQL! (ID: {storyboard_id})"
-                )
-              else:
-                st.warning(
-                    "⚠️ Berhasil digenerate, namun koneksi MySQL terputus."
-                )
-            else:
-              st.error(
-                  "Gagal memproses format JSON dari model lokal. Pastikan"
-                  " Ollama sedang berjalan."
-              )
-
-          except Exception as e:
-            st.error(
-                f"Terjadi kesalahan pada model lokal (Ollama): {e}\nPastikan"
-                " aplikasi Ollama aktif di komputer Anda."
-            )
-
-    if st.session_state.rag_contexts:
-      for i, doc in enumerate(st.session_state.rag_contexts):
-        st.markdown(
-            f"""
-                <div class="card-box">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <b>Konten Referensi #{i+1}</b>
-                        <span style="background-color: #D69E2E; color: #003366; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">Active</span>
-                    </div>
-                    <p style="font-size: 13px; color: #334155; margin-top: 5px;">
-                        {doc.page_content[:180]}...
-                    </p>
-                    <div style="font-size: 11px; color: #64748B;">
-                        <span>Source RPS: {st.session_state.uploaded_rps_name}</span>
-                    </div>
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-      st.info(
-          "Belum ada konteks aktif. Upload dokumen RPS PDF dan klik 'Generate Storyboard'."
-      )
-
-  # ==========================================
-  # KOLOM 3: STORYBOARD EDITOR & MANAGEMENT
-  # ==========================================
-  with col_right:
-    st.subheader("Storyboard Editor & Management")
-
-    if "storyboard_df" not in st.session_state:
-      st.session_state.storyboard_df = pd.DataFrame(columns=[
-          "Judul Scene", "Visualisasi", "Instruksi untuk Visual", 
-          "Animasi", "On-Screen Text", "Voice Over Text", 
-          "Backsound", "Durasi", "Saran dan Info"
-      ])
-
-    st.markdown(
-        f"📋 **Prodi:** {program_studi if program_studi else '-'} | **Mata Kuliah:** {nama_mata_kuliah if nama_mata_kuliah else '-'} | 📄 **RPS:** `{st.session_state.uploaded_rps_name}`"
-    )
-    st.divider()
-
-    updated_rows = []
-    
-    if st.session_state.storyboard_df.empty:
-      st.info("Belum ada scene yang dimuat atau digenerate. Klik '➕ Add New Scene' atau 'Generate Storyboard' untuk memulai.")
-    else:
-      for idx, row in st.session_state.storyboard_df.iterrows():
-        with st.expander(
-            f"🎬 {row.get('Judul Scene', f'Scene {idx+1}')} (Durasi:"
-            f" {row.get('Durasi', '00:15')})",
-            expanded=False,
-        ):
-          c1, c2 = st.columns(2)
-          with c1:
-            new_judul = st.text_input(
-                "Judul Scene", value=str(row["Judul Scene"]), key=f"jdl_{idx}"
-            )
-            new_dur = st.text_input(
-                "Durasi", value=str(row["Durasi"]), key=f"dur_{idx}"
-            )
-            new_anim = st.text_input(
-                "Animasi", value=str(row["Animasi"]), key=f"anim_{idx}"
-            )
-            new_ost = st.text_input(
-                "On-Screen Text",
-                value=str(row["On-Screen Text"]),
-                key=f"ost_{idx}",
-            )
-            new_bs = st.text_input(
-                "Backsound", value=str(row["Backsound"]), key=f"bs_{idx}"
-            )
-          with c2:
-            new_vis = st.text_area(
-                "Visualisasi",
-                value=str(row["Visualisasi"]),
-                key=f"vis_{idx}",
-                height=75,
-            )
-            new_inst = st.text_area(
-                "Instruksi untuk Visualisasi",
-                value=str(row["Instruksi untuk Visual"]),
-                key=f"inst_{idx}",
-                height=75,
-            )
-            new_vot = st.text_area(
-                "Voice Over Text",
-                value=str(row["Voice Over Text"]),
-                key=f"vot_{idx}",
-                height=75,
-            )
-            new_saran = st.text_area(
-                "Saran : Info",
-                value=str(row["Saran dan Info"]),
-                key=f"saran_{idx}",
-                height=75,
-            )
-
-          b_col1, b_col2 = st.columns(2)
-          with b_col1:
-            is_saved = st.button(
-                "💾 Simpan Baris Ini",
-                key=f"save_row_{idx}",
-                use_container_width=True,
-            )
-          with b_col2:
-            is_deleted = st.button(
-                "🗑️ Hapus Baris Ini",
-                key=f"del_row_{idx}",
-                use_container_width=True,
-            )
-
-          if is_deleted:
-            continue
-
-          if is_saved:
-            st.success(f"Scene '{new_judul}' berhasil diperbarui di memori!")
-
-          updated_rows.append({
-              "Judul Scene": new_judul,
-              "Visualisasi": new_vis,
-              "Instruksi untuk Visual": new_inst,
-              "Animasi": new_anim,
-              "On-Screen Text": new_ost,
-              "Voice Over Text": new_vot,
-              "Backsound": new_bs,
-              "Durasi": new_dur,
-              "Saran dan Info": new_saran,
-          })
-        st.markdown("---")
-
-      st.session_state.storyboard_df = pd.DataFrame(updated_rows)
-
-    col_btn1, col_btn2 = st.columns([1, 1])
-    with col_btn1:
-      if st.button("➕ Add New Scene"):
-        next_num = len(st.session_state.storyboard_df) + 1
-        new_row_df = pd.DataFrame([{
-            "Judul Scene": f"Scene {str(next_num).zfill(2)} - Judul Baru",
-            "Visualisasi": "Deskripsi visual...",
-            "Instruksi untuk Visual": "Instruksi khusus...",
-            "Animasi": "Fade In",
-            "On-Screen Text": "Teks Layar...",
-            "Voice Over Text": '"Naskah suara..."',
-            "Backsound": "Audio...",
-            "Durasi": "00:15",
-            "Saran dan Info": "Catatan tambahan...",
-        }])
-        st.session_state.storyboard_df = pd.concat(
-            [st.session_state.storyboard_df, new_row_df], ignore_index=True
-        )
-        st.rerun()
-
-    st.divider()
-
-    if st.session_state.storyboard_df.empty:
-      st.warning("⚠️ Belum ada scene untuk diexport.")
-    else:
-      pptx_data = generate_pptx(st.session_state.storyboard_df, program_studi, nama_mata_kuliah, project_name)
-      st.download_button(
-          label="📥 Export to PPT",
-          data=pptx_data,
-          file_name=f"{project_name.replace(' ', '_')}_Storyboard.pptx" if project_name else "Storyboard.pptx",
-          mime=(
-              "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          ),
-          use_container_width=True,
-      )
-
-    # ==========================================
-    # TABEL DAFTAR RIWAYAT PROYEK USER (DENGAN INFORMASI RPS)
-    # ==========================================
-    st.markdown("---")
-    with st.expander("📂 Riwayat Proyek Storyboard Anda", expanded=False):
-      if check_db_connection():
-        try:
-          conn = get_db_connection()
-          query_history = "SELECT id, program_studi, nama_mata_kuliah, project_name, rps_filename, created_at FROM storyboards WHERE username = %s ORDER BY id DESC"
-          df_history = pd.read_sql(query_history, conn, params=(st.session_state.username,))
-          conn.close()
-
-          if not df_history.empty:
-            df_display = df_history.drop(columns=["id"])
-
-            event = st.dataframe(
-                df_display, 
-                use_container_width=True, 
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
-
-            selected_rows = event.selection.rows
-            if selected_rows:
-              selected_index = selected_rows[0]
-              selected_proj_id = int(df_history.iloc[selected_index]["id"])
-              selected_proj_name = df_history.iloc[selected_index]["project_name"]
-              selected_rps = df_history.iloc[selected_index]["rps_filename"]
-
-              if st.button(f"📂 Muat Proyek '{selected_proj_name}' (ID: {selected_proj_id}) ke Editor"):
-                conn = get_db_connection()
-                query_load_scenes = """
-                    SELECT judul_scene, visualisasi, instruksi_visual, animasi, 
-                           on_screen_text, voice_over_text, backsound, durasi, saran_info 
-                    FROM storyboard_scenes WHERE storyboard_id = %s
-                """
-                df_scenes_loaded = pd.read_sql(query_load_scenes, conn, params=(selected_proj_id,))
-                conn.close()
-
-                if not df_scenes_loaded.empty:
-                  df_scenes_loaded.rename(columns={
-                      "judul_scene": "Judul Scene",
-                      "visualisasi": "Visualisasi",
-                      "instruksi_visual": "Instruksi untuk Visual",
-                      "animasi": "Animasi",
-                      "on_screen_text": "On-Screen Text",
-                      "voice_over_text": "Voice Over Text",
-                      "backsound": "Backsound",
-                      "durasi": "Durasi",
-                      "saran_info": "Saran dan Info"
-                  }, inplace=True)
-
-                  st.session_state.storyboard_df = df_scenes_loaded
-                  st.session_state.uploaded_rps_name = selected_rps
-                  st.success(f"✨ Proyek '{selected_proj_name}' (Ref RPS: {selected_rps}) berhasil dimuat ke editor!")
-                  st.rerun()
-                else:
-                  st.warning("⚠️ Tidak ada data scene yang ditemukan untuk proyek ini.")
-          else:
-            st.info("Belum ada riwayat proyek tersimpan untuk akun Anda.")
-        except Exception as e:
-          st.info(f"Riwayat proyek belum tersedia: {e}")
+                for row
