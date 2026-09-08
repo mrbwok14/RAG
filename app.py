@@ -65,15 +65,15 @@ st.markdown(
 def get_db_connection():
   if "mysql" in st.secrets:
     db_config = st.secrets["mysql"]
-    host = db_config.get("host", "mysql.railway.internal")
+    host = db_config.get("host", "mainline.proxy.rlwy.net")
     user = db_config.get("user", "root")
     password = db_config.get("password", "QfMrADZ1PXPIhoruAXaxCyfymGvLFirz")
     database = db_config.get("database", "railway")
-    port = int(db_config.get("port", 3306))
+    port = int(db_config.get("port", 55394))
   else:
     host = "mainline.proxy.rlwy.net"
     user = "root"
-    password = "QfMrADZ1PXPIhoruAXaxCyfymGvLFirz"
+    password = "QfMrADZlPXPIhoruAXaxCyfymGvLFirz"
     database = "railway"
     port = 55394
 
