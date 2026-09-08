@@ -8,3 +8,4 @@ ragas
 datasets
 pandas
 python-pptx
+mysql-connector-python
