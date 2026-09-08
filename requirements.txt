@@ -9,3 +9,4 @@ datasets
 pandas
 python-pptx
 mysql-connector-python
+langchain-groq
