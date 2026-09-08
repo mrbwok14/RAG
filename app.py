@@ -114,7 +114,6 @@ def init_db_tables():
                 )
             """)
 
-      # Menambahkan kolom alignment_evaluation jika belum ada di tabel storyboards
       cursor.execute("""
                 CREATE TABLE IF NOT EXISTS storyboards (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -130,6 +129,16 @@ def init_db_tables():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+      # Cek otomatis dan tambahkan kolom alignment_evaluation jika belum ada di tabel lama
+      cursor.execute(
+          "SHOW COLUMNS FROM storyboards LIKE 'alignment_evaluation'"
+      )
+      result = cursor.fetchone()
+      if not result:
+        cursor.execute(
+            "ALTER TABLE storyboards ADD COLUMN alignment_evaluation TEXT"
+        )
 
       cursor.execute("""
                 CREATE TABLE IF NOT EXISTS storyboard_scenes (
@@ -152,8 +161,8 @@ def init_db_tables():
       conn.commit()
       cursor.close()
       conn.close()
-  except Exception:
-    pass
+  except Exception as e:
+    print(f"Error init tables: {e}")
 
 
 init_db_tables()
@@ -513,7 +522,6 @@ elif st.session_state.is_admin:
         conn.close()
 
         if not df_projects.empty:
-          # Tampilkan tabel proyek tanpa kolom teks panjang evaluation agar rapi
           df_display = df_projects.drop(columns=["alignment_evaluation"])
 
           event_admin = st.dataframe(
@@ -524,7 +532,6 @@ elif st.session_state.is_admin:
               selection_mode="single-row",
           )
 
-          # --- KOMPONEN: LEARNING OBJECTIVE-GROUNDED RAG EVALUATION BERDASARKAN PROYEK YANG DIKLIK ---
           selected_admin_rows = event_admin.selection.rows
           if selected_admin_rows:
             selected_admin_idx = selected_admin_rows[0]
@@ -815,7 +822,6 @@ else:
 
             scenes_json = parse_llm_json_response(resp_text)
 
-            # Evaluasi Alignment Learning Objective untuk disimpan ke DB
             alignment_prompt = (
                 "SYSTEM: Anda adalah evaluator RAG dan kurikulum pendidikan.\n"
                 "Berdasarkan dokumen kurikulum referensi dan Learning Objective yang ditentukan, "
