@@ -1,3 +1,10 @@
 streamlit
+langchain-community
+langchain-core
+chromadb
+sentence-transformers
+pypdf
+ragas
+datasets
 pandas
-numpy
+python-pptx
