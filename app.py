@@ -71,11 +71,11 @@ def get_db_connection():
     database = db_config.get("database", "railway")
     port = int(db_config.get("port", 3306))
   else:
-    host = "mysql.railway.internal"
+    host = "mainline.proxy.rlwy.net"
     user = "root"
     password = "QfMrADZ1PXPIhoruAXaxCyfymGvLFirz"
     database = "railway"
-    port = 3306
+    port = 55394
 
   return mysql.connector.connect(
       host=host,
