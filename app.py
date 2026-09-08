@@ -563,6 +563,7 @@ else:
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
+      st.session_state.alignment_evaluation = ""
       st.rerun()
     st.divider()
 
@@ -599,6 +600,8 @@ else:
     st.session_state.rag_contexts = []
   if "uploaded_rps_name" not in st.session_state:
     st.session_state.uploaded_rps_name = "-"
+  if "alignment_evaluation" not in st.session_state:
+    st.session_state.alignment_evaluation = ""
 
   col_left, col_middle, col_right = st.columns([1.1, 1.2, 2.7], gap="medium")
 
@@ -756,6 +759,23 @@ else:
 
             scenes_json = parse_llm_json_response(resp_text)
 
+            # --- TAMBAHAN FITUR: LEARNING OBJECTIVE ALIGNMENT EVALUATION ---
+            alignment_prompt = (
+                "SYSTEM: Anda adalah evaluator RAG dan kurikulum pendidikan.\n"
+                "Berdasarkan dokumen kurikulum referensi dan Learning Objective yang ditentukan, "
+                "berikan evaluasi singkat berupa 'Learning Objective Alignment Evaluation' "
+                "apakah rancangan scene storyboard ini sudah selaras, serta berikan skor kecocokan (0-100%).\n\n"
+                f"Target Learning Objective: {learning_objectives}\n"
+                f"Dokumen Referensi: {context_text[:1000]}"
+            )
+            alignment_response = llm.invoke(alignment_prompt)
+            alignment_text = (
+                alignment_response.content
+                if hasattr(alignment_response, "content")
+                else str(alignment_response)
+            )
+            st.session_state.alignment_evaluation = alignment_text
+
             if scenes_json and isinstance(scenes_json, list):
               formatted_scenes = []
               for item in scenes_json:
@@ -865,6 +885,16 @@ else:
   # ==========================================
   with col_right:
     st.subheader("Storyboard Editor & Management")
+
+    # --- KOMPONEN BARU: LEARNING OBJECTIVE ALIGNMENT EVALUATION ---
+    if (
+        "alignment_evaluation" in st.session_state
+        and st.session_state.alignment_evaluation
+    ):
+      with st.expander(
+          "🎯 Learning Objective–Grounded RAG Evaluation", expanded=True
+      ):
+        st.info(st.session_state.alignment_evaluation)
 
     if "storyboard_df" not in st.session_state:
       st.session_state.storyboard_df = pd.DataFrame(columns=[
