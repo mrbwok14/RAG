@@ -164,7 +164,9 @@ def parse_llm_json_response(response_text):
 
     text = response_text.strip()
 
+    # 1. Coba bersihkan blok markdown jika ada (```json ... ``` atau ``` ...)
     if "```" in text:
+      # Ambil isi di dalam blok markdown pertama yang ditemukan
       match_code = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
       if match_code:
         text = match_code[0].strip()
@@ -173,11 +175,13 @@ def parse_llm_json_response(response_text):
         text = re.sub(r"\n?```$", "", text)
         text = text.strip()
 
+    # 2. Coba langsung parse jika sudah murni JSON
     try:
       return json.loads(text)
     except Exception:
       pass
 
+    # 3. Cari pola array JSON [ ... ] di dalam teks menggunakan regex yang agresif
     match_array = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
     if match_array:
       try:
@@ -185,6 +189,7 @@ def parse_llm_json_response(response_text):
       except Exception:
         pass
 
+    # 4. Jika masih gagal, coba bersihkan karakter non-JSON di awal/akhir string
     start_idx = text.find("[")
     end_idx = text.rfind("]")
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
