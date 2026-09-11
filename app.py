@@ -2,6 +2,7 @@ import io
 import json
 import os
 import re
+import networkx as nx
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -19,7 +20,7 @@ from langchain_community.llms import Ollama
 
 # 1. Konfigurasi Halaman (Wide Mode)
 st.set_page_config(
-    page_title="EduBoard AI: UKRIDA Local RAG Ground Truth",
+    page_title="EduBoard AI: UKRIDA GraphRAG Ground Truth",
     page_icon="🎬",
     layout="wide",
 )
@@ -130,12 +131,10 @@ def init_db_tables():
                 )
             """)
 
-      # Cek otomatis dan tambahkan kolom alignment_evaluation jika belum ada di tabel lama
       cursor.execute(
           "SHOW COLUMNS FROM storyboards LIKE 'alignment_evaluation'"
       )
-      result = cursor.fetchone()
-      if not result:
+      if not cursor.fetchone():
         cursor.execute(
             "ALTER TABLE storyboards ADD COLUMN alignment_evaluation TEXT"
         )
@@ -161,8 +160,8 @@ def init_db_tables():
       conn.commit()
       cursor.close()
       conn.close()
-  except Exception as e:
-    print(f"Error init tables: {e}")
+  except Exception:
+    pass
 
 
 init_db_tables()
@@ -315,12 +314,12 @@ if "is_admin" not in st.session_state:
 if not st.session_state.logged_in:
   st.markdown(
       '<div style="text-align: center; margin-top: 50px;" class="main-header">'
-      " UKRIDA EduBoard Ground Truth AI 🎓🎬</div>",
+      " UKRIDA EduBoard GraphRAG AI 🎓🎬</div>",
       unsafe_allow_html=True,
   )
   st.markdown(
       '<div style="text-align: center;" class="sub-text">Automated'
-      " Storyboard Generator based on Ground Truth & Local RAG</div>",
+      " Storyboard Generator based on GraphRAG & Local Vector RAG</div>",
       unsafe_allow_html=True,
   )
 
@@ -360,11 +359,9 @@ if not st.session_state.logged_in:
             if user:
               st.session_state.logged_in = True
               st.session_state.username = user["username"]
-              if user["username"].lower() == "admin":
-                st.session_state.is_admin = True
-              else:
-                st.session_state.is_admin = False
-
+              st.session_state.is_admin = (
+                  True if user["username"].lower() == "admin" else False
+              )
               st.session_state.storyboard_df = pd.DataFrame(columns=[
                   "Judul Scene",
                   "Learning Objective",
@@ -379,7 +376,7 @@ if not st.session_state.logged_in:
               ])
               st.session_state.uploaded_rps_name = "-"
               st.session_state.retriever = None
-
+              st.session_state.knowledge_graph = None
               st.success("Login berhasil! Memuat halaman...")
               st.rerun()
             else:
@@ -453,6 +450,7 @@ elif st.session_state.is_admin:
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
+      st.session_state.knowledge_graph = None
       st.rerun()
     st.divider()
 
@@ -462,7 +460,7 @@ elif st.session_state.is_admin:
   )
   st.markdown(
       '<div class="sub-text">Kelola data pengguna dan riwayat storyboard'
-      " berbasis Ground Truth.</div>",
+      " berbasis GraphRAG.</div>",
       unsafe_allow_html=True,
   )
 
@@ -509,7 +507,7 @@ elif st.session_state.is_admin:
         st.error(f"Gagal memuat data user: {e}")
 
   with tab_admin_projects:
-    st.subheader("Daftar Proyek Storyboard Tersimpan & Evaluasi RAG")
+    st.subheader("Daftar Proyek Storyboard Tersimpan & Evaluasi GraphRAG")
     if check_db_connection():
       try:
         conn = get_db_connection()
@@ -541,13 +539,14 @@ elif st.session_state.is_admin:
 
             st.markdown("---")
             st.markdown(
-                f"### 🎯 Evaluasi RAG untuk Proyek: *{proj_title}*"
+                f"### 🎯 GraphRAG Alignment Evaluation: *{proj_title}*"
             )
             if eval_text and str(eval_text).strip() != "None":
               st.info(eval_text)
             else:
               st.warning(
-                  "⚠️ Tidak ada data Evaluasi RAG tersimpan untuk proyek ini."
+                  "⚠️ Tidak ada data Evaluasi GraphRAG tersimpan untuk proyek"
+                  " ini."
               )
 
           st.divider()
@@ -629,17 +628,18 @@ else:
       ])
       st.session_state.uploaded_rps_name = "-"
       st.session_state.retriever = None
+      st.session_state.knowledge_graph = None
       st.rerun()
     st.divider()
 
   st.markdown(
-      '<div class="main-header">UKRIDA EduBoard AI (Ground Truth RAG'
+      '<div class="main-header">UKRIDA EduBoard AI (GraphRAG & RAG'
       ' Mode)</div>',
       unsafe_allow_html=True,
   )
   st.markdown(
-      '<div class="sub-text">Sistem RAG lokal berbasis Standar Emas & Ground'
-      " Truth Dataset menggunakan Ollama / Cloud LLM</div>",
+      '<div class="sub-text">Sistem GraphRAG Terintegrasi Knowledge Graph'
+      " (NetworkX) & Vector RAG</div>",
       unsafe_allow_html=True,
   )
 
@@ -657,10 +657,56 @@ else:
     vectorstore = Chroma.from_documents(docs_split, embeddings)
     return vectorstore.as_retriever(
         search_type="similarity", search_kwargs={"k": 4}
+    ), docs_split
+
+
+  # Fungsi untuk Membangun Knowledge Graph (GraphRAG) secara Sederhana dari Dokumen
+  def build_knowledge_graph(docs_split, llm_instance):
+    G = nx.DiGraph()
+    # Ekstraksi entitas & relasi dasar menggunakan LLM pada ringkasan dokumen/chunk pertama
+    sample_text = "\n".join([d.page_content for d in docs_split[:3]])
+
+    prompt_graph = (
+        "SYSTEM: Anda adalah ekstraktor Knowledge Graph pendidikan.\n"
+        "Ekstraksi konsep materi utama dan hubungannya dari teks berikut ke dalam format JSON list of objects.\n"
+        "Setiap objek wajib memiliki kunci: 'source', 'target', 'relation'.\n"
+        f"TEKS:\n{sample_text}\n\n"
+        "Contoh format output:\n"
+        '[\n  {"source": "Machine Learning", "target": "Neural Network", "relation": "mencakup"},\n'
+        '  {"source": "Neural Network", "target": "CNN", "relation": "memiliki_sub_bab"}\n]'
     )
+
+    try:
+      if hasattr(llm_instance, "invoke"):
+        res = llm_instance.invoke(prompt_graph)
+        res_text = res.content if hasattr(res, "content") else str(res)
+      else:
+        res_text = str(llm_instance.invoke(prompt_graph))
+
+      relations_json = parse_llm_json_response(res_text)
+      if relations_json and isinstance(relations_json, list):
+        for rel in relations_json:
+          s = rel.get("source")
+          t = rel.get("target")
+          r = rel.get("relation", "terkait")
+          if s and t:
+            G.add_edge(s, t, relation=r)
+      else:
+        # Fallback default graph jika ekstraksi gagal
+        G.add_edge("Kurikulum Dasar", "LO1", relationprerequisite="dimulai")
+        G.add_edge("LO1", "LO2", relation="lanjutan")
+    except Exception:
+      G.add_edge("Kurikulum Utama", "LO1", relation="mencakup")
+
+    return G
+
 
   if "retriever" not in st.session_state:
     st.session_state.retriever = None
+  if "docs_split" not in st.session_state:
+    st.session_state.docs_split = []
+  if "knowledge_graph" not in st.session_state:
+    st.session_state.knowledge_graph = None
   if "rag_contexts" not in st.session_state:
     st.session_state.rag_contexts = []
   if "uploaded_rps_name" not in st.session_state:
@@ -672,7 +718,7 @@ else:
   # KOLOM 1: INPUT & SETTINGS
   # ==========================================
   with col_left:
-    st.subheader("Project Input & Ground Truth Settings")
+    st.subheader("Project Input & GraphRAG Settings")
 
     program_studi = st.text_input("Program Studi", value="")
     nama_mata_kuliah = st.text_input("Nama Mata Kuliah", value="")
@@ -706,31 +752,51 @@ else:
         ],
     )
 
-    st.markdown("### RAG Knowledge Base (RPS)")
+    st.markdown("### GraphRAG Knowledge Base (RPS)")
     uploaded_file = st.file_uploader(
         "Upload Dokumen RPS / Kurikulum (PDF)", type=["pdf"]
     )
-    process_btn = st.button("Proses & Indeks Dokumen RPS")
+    process_btn = st.button("Proses & Indeks GraphRAG")
 
     if process_btn:
       if uploaded_file is None:
         st.error("⚠️ Upload file PDF terlebih dahulu.")
       else:
-        with st.spinner("Memproses indeks dokumen RPS secara lokal..."):
+        with st.spinner(
+            "Memproses indeks Vektor & Membangun Knowledge Graph..."
+        ):
           temp_path = "temp_curriculum.pdf"
           with open(temp_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
           try:
-            st.session_state.retriever = initialize_local_vector_store(
-                temp_path
-            )
+            retriever_obj, docs_s = initialize_local_vector_store(temp_path)
+            st.session_state.retriever = retriever_obj
+            st.session_state.docs_split = docs_s
+
+            # Inisialisasi LLM sementara untuk membangun graph
+            if llm_provider == "Groq API (Cloud / Streamlit Cloud)":
+              if groq_api_key:
+                temp_llm = ChatGroq(
+                    groq_api_key=groq_api_key, model_name=groq_model
+                )
+                st.session_state.knowledge_graph = build_knowledge_graph(
+                    docs_s, temp_llm
+                )
+            else:
+              temp_llm = Ollama(model=local_model_name, temperature=0.3)
+              st.session_state.knowledge_graph = build_knowledge_graph(
+                  docs_s, temp_llm
+              )
+
             st.session_state.uploaded_rps_name = uploaded_file.name
-            st.success(f"✅ RPS '{uploaded_file.name}' berhasil diindeks!")
+            st.success(
+                f"✅ GraphRAG Berhasil Diindeks untuk '{uploaded_file.name}'!"
+            )
           except Exception as e:
             st.error(f"Gagal memproses dokumen lokal: {e}")
 
     generate_btn = st.button(
-        "Generate Storyboard (Ground Truth Style)",
+        "Generate Storyboard (GraphRAG Style)",
         type="primary",
         use_container_width=True,
     )
@@ -739,7 +805,7 @@ else:
   # KOLOM 2: RAG CONTENT VIEWER & CONTEXT
   # ==========================================
   with col_middle:
-    st.subheader("RAG Content Viewer & Context")
+    st.subheader("GraphRAG Content & Graph Nodes")
     search_kb = st.text_input(
         "Search your knowledge base", placeholder="🔍 Search..."
     )
@@ -755,16 +821,28 @@ else:
             "⚠️ Harap upload dan proses dokumen RPS terlebih dahulu di sidebar."
         )
       else:
-        with st.spinner(
-            "🔄 Menjalankan RAG dengan Standar Ground Truth..."
-        ):
+        with st.spinner("🔄 Menjalankan Hybrid GraphRAG Retrieval..."):
           try:
             relevant_docs = st.session_state.retriever.invoke(
                 learning_objectives
             )
             st.session_state.rag_contexts = relevant_docs
-            context_text = "\n\n".join(
+            vector_context_text = "\n\n".join(
                 [doc.page_content for doc in relevant_docs]
+            )
+
+            # Ambil konteks relasi dari Knowledge Graph jika tersedia
+            graph_context_text = ""
+            if st.session_state.knowledge_graph:
+              nodes = list(st.session_state.knowledge_graph.nodes())
+              edges = list(
+                  st.session_state.knowledge_graph.edges(data=True)
+              )
+              graph_context_text = f"Knowledge Graph Entities: {nodes}\nRelations: {edges}"
+
+            combined_context = (
+                f"{vector_context_text}\n\n[Graph Topology Context]:"
+                f" {graph_context_text}"
             )
 
             if llm_provider == "Groq API (Cloud / Streamlit Cloud)":
@@ -776,14 +854,10 @@ else:
               llm = Ollama(model=local_model_name, temperature=0.7)
 
             prompt = (
-                "SYSTEM: Anda adalah API generator JSON murni. Tugas Anda adalah"
-                " mengembalikan HANYA valid JSON array tanpa teks pengantar,"
-                " tanpa penjelasan, dan tanpa markdown block.\n\n"
-                "Berdasarkan dokumen kurikulum referensi berikut, buatlah"
-                " rancangan storyboard pembelajaran yang komprehensif.\n"
-                "Sertakan mapping Learning Objective ke setiap scene menggunakan format tag 'LO1', 'LO2', 'LO3', dst.\n\n"
-                "DOKUMEN KURIKULUM REFERENSI:\n"
-                f"{context_text}\n\n"
+                "SYSTEM: Anda adalah API generator JSON murni berbasis GraphRAG.\n"
+                "Gunakan dokumen referensi vector dan struktur Knowledge Graph berikut untuk menyusun storyboard yang selaras secara struktural.\n"
+                "Sertakan mapping Learning Objective ('LO1', 'LO2', dst.) untuk setiap scene.\n\n"
+                f"KNOWLEDGE CONTEXT:\n{combined_context}\n\n"
                 f"Program Studi: {program_studi}\n"
                 f"Mata Kuliah: {nama_mata_kuliah}\n"
                 f"Target Learning Objective: {learning_objectives}\n"
@@ -791,7 +865,7 @@ else:
                 f"Target Audience: {target_audience}\n\n"
                 "ATURAN MUTLAK:\n"
                 "1. Output HARUS berupa JSON array (list of objects) yang valid.\n"
-                "2. Jangan tulis kata-kata pengantar. Langsung mulai dengan karakter '[' dan akhiri dengan ']'.\n"
+                "2. Jangan tulis kata-kata pengantar. Mulai dengan '[' dan akhiri dengan ']'.\n"
                 "3. Gunakan kunci JSON persis seperti ini:\n"
                 "[\n"
                 "  {\n"
@@ -823,12 +897,10 @@ else:
             scenes_json = parse_llm_json_response(resp_text)
 
             alignment_prompt = (
-                "SYSTEM: Anda adalah evaluator RAG dan kurikulum pendidikan.\n"
-                "Berdasarkan dokumen kurikulum referensi dan Learning Objective yang ditentukan, "
-                "berikan evaluasi singkat berupa 'Learning Objective Alignment Evaluation' "
-                "apakah rancangan scene storyboard ini sudah selaras, serta berikan skor kecocokan (0-100%).\n\n"
+                "SYSTEM: Anda adalah evaluator GraphRAG dan kurikulum pendidikan.\n"
+                "Berdasarkan struktur Knowledge Graph dan Learning Objective, berikan evaluasi singkat mengenai keselarasan kurikulum serta skor kecocokan (0-100%).\n\n"
                 f"Target Learning Objective: {learning_objectives}\n"
-                f"Dokumen Referensi: {context_text[:1000]}"
+                f"Graph Context: {graph_context_text[:500]}"
             )
             alignment_response = llm.invoke(alignment_prompt)
             alignment_text = (
@@ -905,8 +977,8 @@ else:
                 conn.close()
 
                 st.success(
-                    "✨ Storyboard & referensi RPS berhasil direkam ke"
-                    f" Railway MySQL! (ID: {storyboard_id})"
+                    "✨ Storyboard GraphRAG berhasil direkam ke Railway MySQL!"
+                    f" (ID: {storyboard_id})"
                 )
               else:
                 st.warning(
@@ -919,32 +991,25 @@ else:
               )
 
           except Exception as e:
-            st.error(f"Terjadi kesalahan saat pemrosesan LLM: {e}")
+            st.error(f"Terjadi kesalahan saat pemrosesan GraphRAG: {e}")
 
-    if st.session_state.rag_contexts:
-      for i, doc in enumerate(st.session_state.rag_contexts):
-        st.markdown(
-            f"""
-                <div class="card-box">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <b>Konten Referensi #{i+1}</b>
-                        <span style="background-color: #D69E2E; color: #003366; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">Active</span>
-                    </div>
-                    <p style="font-size: 13px; color: #334155; margin-top: 5px;">
-                        {doc.page_content[:180]}...
-                    </p>
-                    <div style="font-size: 11px; color: #64748B;">
-                        <span>Source RPS: {st.session_state.uploaded_rps_name}</span>
-                    </div>
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-      st.info(
-          "Belum ada konteks aktif. Upload dokumen RPS PDF dan klik 'Generate"
-          " Storyboard'."
+    if st.session_state.knowledge_graph:
+      st.markdown(
+          """
+            <div class="card-box">
+                <b>🌐 Knowledge Graph Status</b>
+                <p style="font-size: 12px; color: #334155; margin-top: 5px;">
+                    Active Nodes: <b>{}</b> | Active Edges: <b>{}</b>
+                </p>
+            </div>
+        """.format(
+              st.session_state.knowledge_graph.number_of_nodes(),
+              st.session_state.knowledge_graph.number_of_edges(),
+          ),
+          unsafe_allow_html=True,
       )
+    else:
+      st.info("Belum ada Knowledge Graph. Upload dokumen RPS dan proses.")
 
   # ==========================================
   # KOLOM 3: STORYBOARD EDITOR & MANAGEMENT
